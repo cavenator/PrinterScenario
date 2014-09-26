@@ -24,6 +24,7 @@ class PrinterTest(_system: ActorSystem) extends TestKit(_system) with FunSuiteLi
     import scala.concurrent.Await
     import Person._
     import Printer._
+    import PrinterHelper._
     import Tools._
 
     implicit val timeout = Timeout(2.second)
@@ -107,6 +108,7 @@ class PrinterTest(_system: ActorSystem) extends TestKit(_system) with FunSuiteLi
 
 object Tools {
     import Printer._
+    import PrinterHelper._
 
     class TestActorStub(val probe: TestProbe, val flaky:Boolean, val ex: Exception) extends Actor {
 
