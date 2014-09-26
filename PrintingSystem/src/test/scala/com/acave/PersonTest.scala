@@ -7,6 +7,7 @@ import org.scalatest.BeforeAndAfterAll
 import org.scalatest.FunSuiteLike
 import akka.testkit.{TestProbe, TestKit, ImplicitSender}
 import scala.concurrent.duration._
+import scala.collection.immutable._
 
 import Person._
 
@@ -18,59 +19,97 @@ class PersonTest(_system: ActorSystem) extends TestKit(_system) with ImplicitSen
                 system.shutdown
           }
 
-          test("A Person should be able to send multiple things for the printer to print"){
-            val testPrinter = new TestProbe(_system){
-                def expectMsgCount(x:Int, d: FiniteDuration) = {
-                    within(d){
-                       for (i <- 0 until x){
-                          expectMsgPF(){
-                            case Document(y) => sender ! Ready
-                          }
-                       }
-                    }
-                    expectNoMsg(200 milliseconds)
-                }
+          import akka.pattern.ask
+          import akka.util.Timeout
+          import system.dispatcher
+          import scala.concurrent.Await
+          implicit val timeout = Timeout(2.second)
 
-            }
-            val numPapers = 3
-            val actor = system.actorOf(Person.props(testPrinter.ref, numPapers))
+          test("A person receives documents to print and does not print unless instructed to"){
+            val probe = TestProbe()
 
-            actor ! Start
+            val actor = system.actorOf(Person.props(probe.ref))
 
-            testPrinter.expectMsgCount(numPapers, 1 second)
+            actor ! Documents(Document(3))
+            
+            val future = actor ? GetJobStatus
+            assert(Await.result(future, 1 second).asInstanceOf[JobStatus] === JobStatus(Nil, List(Document(3))))
           }
 
-          test("A Person should be notified if the printer fails and is out of order"){
+          test("Person needs documents or else they cannot print"){
+            val probe = TestProbe()
 
-            import akka.pattern.ask
-            import akka.util.Timeout
-            import system.dispatcher
-            import scala.concurrent.Await
+            val actor = system.actorOf(Person.props(probe.ref))
 
-            implicit val timeout = Timeout(2.second)
+            actor ! "Print"
 
-            val testPrinter = new TestProbe(_system){
-                def expectOutOfOrderMsgAfterXMsgs(x:Int) = {
-                       for (i <- 0 to x ){
-                          expectMsgPF(){
-                            case Document(y) if i==x => sender ! OutOfOrder
-                            case Document(y)  => sender ! Ready
-                          }
-                       }
+            probe.expectNoMsg()
+          }
 
-                }
+          test("When Person prints a document, it's \"in-progress\" and moved out of the \"remaining\" queue"){
+            val probe = TestProbe()
 
-            }
-            val numPapers = 3
-            val actor = system.actorOf(Person.props(testPrinter.ref, numPapers))
+            val actor = system.actorOf(Person.props(probe.ref))
 
-            for (i <- 0 until numPapers){
-                actor ! Start
-                testPrinter.expectOutOfOrderMsgAfterXMsgs(i)
-                val future = actor ? GetRemainingJobs
-                val expectedRemainingJobs = numPapers - i
-                assert(Await.result(future.map{case RemainingJobs(x) => x }, 1 second).asInstanceOf[Int] === expectedRemainingJobs)
-            }
-            
+            actor ! Documents(Document(3))
+
+            actor ! "Print"
+
+            probe.expectMsg(Document(3))
+            val future1 = actor ? GetJobStatus
+            assert(Await.result(future1, 2 second).asInstanceOf[JobStatus] === JobStatus(List(Document(3)),Nil))
+
+            actor ! PrintedDoc
+
+            val future = actor ? GetJobStatus
+            assert(Await.result(future, 2 second).asInstanceOf[JobStatus] === JobStatus(Nil,Nil))
+          }
+
+          test("A Person can retrieve more documents to print while waiting for an \"In-progress\" job"){
+
+            val probe = TestProbe()
+
+            val actor = system.actorOf(Person.props(probe.ref))
+
+            actor ! Documents(Document(3))
+
+            actor ! "Print"
+
+            probe.expectMsg(Document(3))
+
+            actor ! Documents(Document(4), Document(5))
+
+            val future = actor ? GetJobStatus
+            assert(Await.result(future, 2 second).asInstanceOf[JobStatus] === JobStatus(List(Document(3)), List(Document(4), Document(5))))
+
+            actor ! "Print"
+            probe.expectMsg(Document(4))
+
+            val future1 = actor ? GetJobStatus
+            assert(Await.result(future1, 2 second).asInstanceOf[JobStatus] === JobStatus(List(Document(3),Document(4)), List(Document(5))))
+          }
+
+          test("Once a person gets remaining documents back from the printer, all remaining and in-progress jobs are no more"){
+            val probe = TestProbe()
+
+            val actor = system.actorOf(Person.props(probe.ref))
+
+            actor ! Documents(Document(3), Document(4), Document(5))
+
+            actor ! "Print"
+
+            probe.expectMsg(Document(3))
+
+            actor ! "Print"
+
+            probe.expectMsg(Document(4))
+
+            actor ! PrintedDoc
+
+            actor ! RemainingDocuments(List(Document(4), Document(5)))
+
+            val future = actor ? GetJobStatus
+            assert(Await.result(future, 2 second).asInstanceOf[JobStatus] === JobStatus(Nil, Nil))
+
           }
    }
