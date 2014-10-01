@@ -89,7 +89,7 @@ class PersonTest(_system: ActorSystem) extends TestKit(_system) with ImplicitSen
             assert(Await.result(future1, 2 second).asInstanceOf[JobStatus] === JobStatus(List(Document(3),Document(4)), List(Document(5))))
           }
 
-          test("Once a person gets remaining documents back from the printer, all remaining and in-progress jobs are no more"){
+          test("Once a person gets remaining documents back from the printer, all in-progress jobs are no more and the remaining documents get added back to the remaining list"){
             val probe = TestProbe()
 
             val actor = system.actorOf(Person.props(probe.ref))
@@ -106,10 +106,24 @@ class PersonTest(_system: ActorSystem) extends TestKit(_system) with ImplicitSen
 
             actor ! PrintedDoc
 
-            actor ! RemainingDocuments(List(Document(4), Document(5)))
+            actor ! RemainingDocuments(List(Document(4)))
 
             val future = actor ? GetJobStatus
-            assert(Await.result(future, 2 second).asInstanceOf[JobStatus] === JobStatus(Nil, Nil))
+            assert(Await.result(future, 2 second).asInstanceOf[JobStatus] === JobStatus(Nil, List(Document(5), Document(4))))
+
+          }
+
+          test("Once Person recieves a PrintingInterval message, they send documents to the printer as specified by the interval"){
+            val probe = TestProbe()
+
+            val actor = system.actorOf(Person.props(probe.ref))
+
+            actor ! Documents(Document(3), Document(2))
+
+            actor ! TimedMessage(1 second)
+
+            probe.receiveN(2, 2 second)
+            probe.expectNoMsg
 
           }
    }

@@ -24,7 +24,7 @@ class Printer(props:Props) extends Actor {
     var recipientList = List[ActorRef]()
     var docTupList = List[(ActorRef, Int)]()
 
-    override val supervisorStrategy = OneForOneStrategy(maxNrOfRetries=15, withinTimeRange=1 minute){
+    override val supervisorStrategy = OneForOneStrategy(maxNrOfRetries=30, withinTimeRange=1 minute){
         case _:PaperJamException =>             Restart
         case _:UndergoMaintenanceException =>   groupAndDistributeRemainingJobsByRecipientsThenBecomeIdle 
                                                 Stop
@@ -55,6 +55,7 @@ class Printer(props:Props) extends Actor {
                                      self ! PrintNextJob
                                   } else {
                                     //if docTupList is empty, become idle
+                                    println("Printer is done with everything! Becoming idle ....")
                                     context.unbecome
                                   }
                                } else {
