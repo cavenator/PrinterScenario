@@ -21,7 +21,8 @@ class Person(printer: ActorRef) extends Actor {
     import Person._
     import context.dispatcher
 
-    var jobsMaps = Map[String, List[Document]]().empty
+    var inprogressDocs:List[Document] = Nil
+    var remainingDocs:List[Document] = Nil
     var scheduledInterval = new Cancellable{
         override def cancel = true
         override def isCancelled = true
@@ -32,25 +33,23 @@ class Person(printer: ActorRef) extends Actor {
     }
 
     def receive:Receive = {
-        case Documents(docs @ _*) => jobsMaps = jobsMaps + ("remaining" -> docs.toList)
-        case "Print" => val docs = jobsMaps.getOrElse("remaining", Nil)
-                        if (!docs.isEmpty){
+        case Documents(docs @ _*) => remainingDocs = remainingDocs ++ docs.toList
+        case "Print" => if (!remainingDocs.isEmpty){
                             println(self.path + " is going to print a document")
-                            val doc = docs.head
-                            jobsMaps = jobsMaps.updated("In-Progress", jobsMaps.getOrElse("In-Progress", Nil) :+ doc)
-                            jobsMaps = jobsMaps.updated("remaining", docs.tail)
+                            val doc = remainingDocs.head
+                            inprogressDocs = inprogressDocs :+ doc
+                            remainingDocs = remainingDocs.tail
                             printer ! doc
                         } else {
                             if (!scheduledInterval.isCancelled) scheduledInterval.cancel
                         }
-        case GetJobStatus => sender ! JobStatus(jobsMaps.getOrElse("In-Progress", Nil), jobsMaps.getOrElse("remaining", Nil))
-        case PrintedDoc => jobsMaps = jobsMaps.updated("In-Progress", jobsMaps("In-Progress").tail)
-                            println(self.path + "has successfully got a message back")
-        case RemainingDocuments(list) => jobsMaps = jobsMaps.updated("In-Progress", Nil)
-                                         jobsMaps = jobsMaps.updated("remaining", jobsMaps.getOrElse("remaining", Nil) ++ list)
+        case GetJobStatus => sender ! JobStatus(inprogressDocs, remainingDocs)
+        case PrintedDoc => inprogressDocs = inprogressDocs.tail
+        case RemainingDocuments(list) => inprogressDocs = Nil
+                                         remainingDocs = remainingDocs ++ list
         case TimedMessage(interval) =>  if (!scheduledInterval.isCancelled) scheduledInterval.cancel
                                         scheduledInterval = context.system.scheduler.schedule(0 second, interval, self, "Print")
-        case Terminated(child) => context.unwatch(printer); println(self.path + " has "+jobsMaps.getOrElse("remaining", Nil).size +" remaining documents."); context.stop(self);
+        case Terminated(child) => context.unwatch(printer); println(self.path + " has "+remainingDocs.size +" remaining documents."); context.stop(self);
         case _ => println(" Person retrieved a message they don't know how to process!")
     }
     
